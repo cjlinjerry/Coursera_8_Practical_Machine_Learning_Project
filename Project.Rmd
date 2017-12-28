@@ -1,0 +1,750 @@
+---
+title: "Machine Learning Project"
+author: "Chieh-Ju Lin"
+date: "12/26/2017"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Outline
+
+This is an R Markdown document for Coursera Data Science Specialization Course - Applied Machine Learning. The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise.  In this report, the machine learning algorithms I used including SVM, Decision Tree, Random Forest, Boosting, Neural Network, and K-Nearest Neighbors. The 20 test cases were predicted using the top 3 best models I built.
+
+```{r results='hide', message=FALSE, warning=FALSE, echo = FALSE}
+### Load required packages
+library(ggplot2)
+library(e1071)
+library(rpart)
+library(caret)
+library(plyr)
+library(rattle)
+library(rpart.plot)
+library(ROCR)
+library(h2o)
+library(randomForest)
+library(gbm)
+library(neuralnet)
+library(class)
+
+mR <- rep("$\\gamma$", 12)
+
+```
+
+## Data Preparation
+Let's read the data and explore it.
+
+```{r echo = FALSE}
+### Read the data
+training <- read.csv("pml-training.csv", stringsAsFactors = FALSE)
+testing <- read.csv("pml-testing.csv", stringsAsFactors = FALSE)
+```
+
+```{r}
+### Explore the data
+table(training$classe)
+# A 5580, B 3797, C 3422, D 3216, E 3607
+```
+
+Seems like there's no class imbalance problem in our training data. However, I noticed that both data sets have many missing values. There are 100 variables with no data in test set. I decided to drop them in both data sets since they are not helpful in prediction.
+
+```{r}
+### Drop variables with no data in testing set
+names <- colnames(testing)[colSums(is.na(testing)) > 0]
+var <- names(training) %in% c(names)
+
+training_cleaned <- training[!var]
+testing_cleaned <- testing[!var]
+```
+
+Then I scaled the data and split the training data into 70% training and 30% validation set. The final data set looks like the following:
+
+```{r echo = FALSE}
+# Also drop variable X and user_name
+training_cleaned <- training_cleaned[-c(1, 2)]
+testing_cleaned <- testing_cleaned[-c(1, 2)]
+
+### Scale the data
+
+training_result <- training_cleaned[58]
+# Drop result and two chr variables
+training_cleaned <- training_cleaned[-c(3, 4, 58)] 
+maxs <- apply(training_cleaned, 2, max)
+mins <- apply(training_cleaned, 2, min)
+training_scaled <- as.data.frame(scale(training_cleaned, center = mins, 
+                                       scale = maxs - mins))
+# Add result and two chr variables back
+training_scaled <- cbind(training_scaled, training[c(5, 6, 160)]) 
+testing_cleaned <- testing_cleaned[-c(3, 4, 58)]
+testing_scaled <- as.data.frame(scale(testing_cleaned, center = mins, 
+                                      scale = maxs - mins))
+testing_scaled <- cbind(testing_scaled, testing[c(5, 6)]) 
+
+### Split the training data into 70% training set and 30% validation set
+set.seed(123)
+sample <- sample(1:nrow(training_scaled), 0.7 * nrow(training_scaled), 
+                 replace = FALSE)
+training <- training_scaled[sample,]
+validation <- training_scaled[-sample,]
+testing <- testing_scaled
+training$classe <- as.factor(training$classe)
+validation$classe <- as.factor(validation$classe)
+training$cvtd_timestamp <- as.factor(training$cvtd_timestamp)
+validation$cvtd_timestamp <- as.factor(validation$cvtd_timestamp)
+testing$cvtd_timestamp <- as.factor(testing$cvtd_timestamp)
+training$new_window <- as.factor(training$new_window)
+validation$new_window <- as.factor(validation$new_window)
+testing$new_window <- as.factor(testing$new_window)
+```
+
+training set
+
+```{r}
+dim(training)
+```
+
+validation set
+
+```{r}
+dim(validation)
+```
+
+testing set
+
+```{r}
+dim(testing)
+```
+
+## Model Building
+### Support Vector Machine
+
+```{r echo = FALSE, results = "hide", cache = TRUE}
+# SVM with linear kernel
+svm_model <- svm(classe ~ ., data = training, type = "C-classification", 
+                 kernel = "linear")
+
+svm_pred_training_1 <- predict(svm_model, training)
+table(svm_pred_training_1, training$classe)
+confusionMatrix(svm_pred_training_1, training$classe)
+acc_svm_linear_training <- mean(svm_pred_training_1 == training$classe)
+
+svm_pred_validation_1 <- predict(svm_model, validation)
+table(svm_pred_validation_1, validation$classe)
+acc_svm_linear_validation <- mean(svm_pred_validation_1 == validation$classe)
+
+# SVM with radial kernel
+svm_model_2 <- svm(classe ~ ., data = training, type = "C-classification",
+                   kernel = "radial")
+svm_pred_training_2 <- predict(svm_model_2, training)
+table(svm_pred_training_2, training$classe)
+acc_svm_radial_training <- mean(svm_pred_training_2 == training$classe)
+
+svm_pred_validation_2 <- predict(svm_model_2, validation)
+table(svm_pred_validation_2, validation$classe)
+acc_svm_radial_validation <- mean(svm_pred_validation_2 == validation$classe)
+
+# SVM with polynomial kernel (degree = 3)
+svm_model_3 <- svm(classe ~ ., data = training, type = "C-classification",
+                   kernel = "polynomial", degree = 3)
+svm_pred_training_3 <- predict(svm_model_3, training)
+table(svm_pred_training_3, training$classe)
+acc_svm_polynomial_training <- mean(svm_pred_training_3 == training$classe)
+
+svm_pred_validation_3 <- predict(svm_model_3, validation)
+table(svm_pred_validation_3, validation$classe)
+acc_svm_polynomial_validation <- mean(svm_pred_validation_3 == validation$classe)
+
+# SVM with polynomial kernel (degree = 5)
+svm_model_4 <- svm(classe ~ ., data = training, type = "C-classification",
+                   kernel = "polynomial", degree = 5)
+svm_pred_training_4 <- predict(svm_model_4, training)
+table(svm_pred_training_4, training$classe)
+acc_svm_polynomial_training_2 <- mean(svm_pred_training_4 == training$classe)
+
+svm_pred_validation_4 <- predict(svm_model_4, validation)
+table(svm_pred_validation_4, validation$classe)
+acc_svm_polynomial_validation_2 <- mean(svm_pred_validation_4 == validation$classe)
+
+# SVM with polynomial kernel (degree = 10)
+svm_model_5 <- svm(classe ~ ., data = training, type = "C-classification",
+                   kernel = "polynomial", degree = 10)
+svm_pred_training_5 <- predict(svm_model_5, training)
+table(svm_pred_training_5, training$classe)
+acc_svm_polynomial_training_3 <- mean(svm_pred_training_5 == training$classe)
+
+svm_pred_validation_5 <- predict(svm_model_5, validation)
+table(svm_pred_validation_5, validation$classe)
+acc_svm_polynomial_validation_3 <- mean(svm_pred_validation_5 == validation$classe)
+```
+
+In this part of analysis, I didn't tune the SVM models since they took too long to run in my laptop. For non-linear kernel, default cost and gamma value were used.  Table for SVM results, and the confusion matrix for validation set using the best SVM model were shown in the following:
+
+```{r, echo = FALSE, cache = TRUE}
+# Create table for SVM result
+svm_list <- c("linear", "radial", "polynomial_degree = 3", 
+              "polynomial_degree = 5", "polynomial_degree = 10")
+svm_training_list <- c(acc_svm_linear_training, acc_svm_radial_training, 
+                       acc_svm_polynomial_training, acc_svm_polynomial_training_2, 
+                       acc_svm_polynomial_training_3)
+svm_validation_list <- c(acc_svm_linear_validation, acc_svm_radial_validation,
+                         acc_svm_polynomial_validation, acc_svm_polynomial_validation_2,
+                         acc_svm_polynomial_validation_3)
+svm_table <- data.frame("svm_model" = svm_list, 
+                        "training_accuracy" = svm_training_list, 
+                        "validation_accuracy" = svm_validation_list)
+svm_table
+
+best_svm_training <- acc_svm_radial_training
+best_svm_validation <- acc_svm_radial_validation
+
+table(svm_pred_validation_2, validation$classe)
+```
+
+### Tree Based Model
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE, fig.show="hide"}
+### Decision Tree
+
+# Single tree, split by gini
+tree_model_1 <- rpart(classe ~ ., data = training, method = "class", 
+                      control = rpart.control(minsplit = 25))
+tree_pred_training_1 <- predict(tree_model_1, training, type = "class")
+table(tree_pred_training_1, training$classe)
+tree_pred_training_1
+acc_tree_training_1 <- mean(tree_pred_training_1 == training$classe)
+
+tree_pred_validation_1 <- predict(tree_model_1, validation, type = "class")
+table(tree_pred_validation_1, validation$classe)
+acc_tree_validation_1 <- mean(tree_pred_validation_1 == validation$classe)
+
+# Prune the tree
+printcp(tree_model_1)
+plotcp(tree_model_1)
+tree_model_1_pruned <- prune(tree_model_1, 
+                             cp = tree_model_1$cptable[which.min(tree_model_1$cptable[,"xerror"]),"CP"])
+# fancyRpartPlot caused errors in R markdown
+# fancyRpartPlot(tree_model_1_pruned, cex = 0.3)
+
+pruned_tree_pred_training_1 <- predict(tree_model_1_pruned, training, type = "class")
+table(pruned_tree_pred_training_1, training$classe)
+acc_pruned_tree_training_1 <- mean(pruned_tree_pred_training_1 == training$classe)
+
+tree_pred_validation_1 <- predict(tree_model_1, validation, type = "class")
+table(tree_pred_validation_1, validation$classe)
+acc_tree_validation_1 <- mean(tree_pred_validation_1 == validation$classe)
+
+pruned_tree_pred_validation_1 <- predict(tree_model_1_pruned, validation, type = "class")
+table(pruned_tree_pred_validation_1, validation$classe)
+acc_pruned_tree_validation_1 <- mean(pruned_tree_pred_validation_1 == validation$classe)
+
+# No difference after pruning
+
+# Single tree, split by information gain
+tree_model_2 <- rpart(classe ~ ., data = training, method = "class", 
+                      parms = list(split = "information"))
+tree_pred_training_2 <- predict(tree_model_2, training, type = "class")
+table(tree_pred_training_2, training$classe)
+tree_pred_training_2
+acc_tree_training_2 <- mean(tree_pred_training_2 == training$classe)
+
+tree_pred_validation_2 <- predict(tree_model_2, validation, type = "class")
+table(tree_pred_validation_2, validation$classe)
+acc_tree_validation_2 <- mean(tree_pred_validation_2 == validation$classe)
+
+# Prune the tree
+printcp(tree_model_2)
+plotcp(tree_model_2)
+
+tree_model_2_pruned <- prune(tree_model_2, 
+                             cp = tree_model_2$cptable[which.min(tree_model_2$cptable[,"xerror"]),"CP"])
+# fancyRpartPlot caused errors in R markdown
+# fancyRpartPlot(tree_model_2_pruned, cex = 0.3)
+
+pruned_tree_pred_training_2 <- predict(tree_model_2_pruned, training, type = "class")
+table(pruned_tree_pred_training_2, training$classe)
+acc_pruned_tree_training_2 <- mean(pruned_tree_pred_training_2 == training$classe)
+
+pruned_tree_pred_validation_2 <- predict(tree_model_2_pruned, validation, type = "class")
+table(pruned_tree_pred_validation_2, validation$classe)
+acc_pruned_tree_validation_2 <- mean(pruned_tree_pred_validation_2 == validation$classe)
+
+# No difference after pruning
+```
+
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE, fig.show="hide"}
+### Random Forest (Ensemble Learning Method - Bagging)
+
+# Random Forest with 100 trees
+set.seed(123)
+forest_model_1 <- randomForest(classe ~ ., training, ntree = 100, 
+                               importance = TRUE)
+forest_pred_training_1 <- predict(forest_model_1, training)
+table(forest_pred_training_1, training$classe)
+acc_forest_training_1 <- mean(forest_pred_training_1 == training$classe)
+
+forest_pred_validation_1 <- predict(forest_model_1, validation)
+table(forest_pred_validation_1, validation$classe)
+acc_forest_validation_1 <- mean(forest_pred_validation_1 == validation$classe)
+
+# Check the importance of each variable
+importance(forest_model_1)
+
+# Plot the importance
+varImpPlot(forest_model_1)
+
+# Plot the OOB error vs number of trees
+plot(forest_model_1$err.rate[,1])
+
+# Random Forest with 500 trees
+set.seed(123)
+forest_model_2 <- randomForest(classe ~ ., training, ntree = 500,
+                               importance = TRUE)
+forest_pred_training_2 <- predict(forest_model_2, training)
+table(forest_pred_training_2, training$classe)
+acc_forest_training_2 <- mean(forest_pred_training_2 == training$classe)
+
+forest_pred_validation_2 <- predict(forest_model_2, validation)
+table(forest_pred_validation_2, validation$classe)
+acc_forest_validation_2 <- mean(forest_pred_validation_2 == validation$classe)
+
+# Plot the OOB error vs number of trees
+plot(forest_model_2$err.rate[,1])
+```
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE}
+### Boosting (Converts weak learner to strong learners)
+
+# Boosting with GBM (caret package)
+fitControl <- trainControl(method = "cv", number = 10)
+tune_Grid <- expand.grid(interaction.depth = 2, n.trees = 500, shrinkage = 0.1,
+                         n.minobsinnode = 20)
+set.seed(123)
+boosting_model_1 <- train(classe ~ ., training, method = "gbm", 
+                          trControl = fitControl,
+                          verbose = FALSE,
+                          tuneGrid = tune_Grid)
+boosting_pred_training_1 <- predict(boosting_model_1, training)
+table(boosting_pred_training_1, training$classe)
+acc_boosting_training_1 <- mean(boosting_pred_training_1 == training$classe)
+
+boosting_pred_validation_1 <- predict(boosting_model_1, validation)
+table(boosting_pred_validation_1, validation$classe)
+acc_boosting_validation_1 <- mean(boosting_pred_validation_1 == validation$classe)
+
+# Boosting with GBM (gbm package)
+set.seed(123)
+boosting_model_2 <- gbm(classe ~ ., data = training, n.trees = 500, 
+                        cv.folds = 10, interaction.depth = 2, shrinkage = 0.1, 
+                        n.minobsinnode = 20, verbose = FALSE, n.cores = 4)
+
+boosting_pred_training_2 <- predict(boosting_model_2, training)
+boosting_pred_training_2 <- attributes(boosting_pred_training_2)$dimnames[[2]][apply(boosting_pred_training_2, 1, which.max)]
+table(boosting_pred_training_2, training$classe)
+acc_boosting_training_2 <- mean(boosting_pred_training_2 == training$classe)
+
+boosting_pred_validation_2 <- predict(boosting_model_2, validation)
+boosting_pred_validation_2 <- attributes(boosting_pred_validation_2)$dimnames[[2]][apply(boosting_pred_validation_2, 1, which.max)]
+table(boosting_pred_validation_2, validation$classe)
+acc_boosting_validation_2 <- mean(boosting_pred_validation_2 == validation$classe)
+```
+
+For tree based models, I built decision trees, pruned trees, random forests, and boosting. I found that use information gain to split the tree have better result than use gini. But pruning didn't change the classification results in both cases.  Random forest and boosting gave us very high accuracy, with 100% in training set and 99% in validation set.  Table for tree based model results, and confusion matrix for validation set using random forest and boosting are shown as follows: 
+
+```{r echo = FALSE, cache = TRUE, error = TRUE}
+# Boosting with GBM (XGBoost)
+
+# Create table for tree based model results
+tree_list <- c("Decision Tree (gini)", 
+               "Decision Tree (information gain)",
+               "Random Forest with 100 trees",
+               "Random Forest with 500 trees",
+               "Boosting with caret package",
+               "Boosting with gbm package")
+tree_training_list <- c(acc_tree_training_1, acc_tree_training_2, acc_forest_training_1,
+                        acc_forest_training_2, acc_boosting_training_1, 
+                        acc_boosting_training_2)
+tree_validation_list <- c(acc_tree_validation_1, acc_tree_validation_2, 
+                          acc_forest_validation_1, acc_forest_validation_2,
+                          acc_boosting_validation_1, acc_boosting_validation_2)
+tree_table <- data.frame("tree_models" = tree_list, 
+                         "training accuracy" = tree_training_list,
+                         "validation accuracy" = tree_validation_list)
+tree_table
+
+```
+
+Confusion matrix for random forest with 500 trees
+```{r echo = FALSE, error = TRUE}
+table(forest_pred_validation_2, validation$classe)
+```
+
+Confusion matrix for boosting with caret package (use 500 trees and 10 folds cross validation)
+```{r echo = FALSE, error = TRUE}
+table(boosting_pred_validation_1, validation$classe)
+```
+
+### Neural Network
+Since Neural Network can only handle quantitative variables, we need to modify our data. I first drop time variables, and turn window variable and our decision variable - classe into dummy variables.
+
+```{r echo = FALSE, results = "hide", cache = TRUE}
+training_nn <- cbind(training, training$new_window == "yes")
+training_nn <- cbind(training_nn, training$new_window == "no")
+training_nn <- cbind(training_nn, training$classe == "A")
+training_nn <- cbind(training_nn, training$classe == "B")
+training_nn <- cbind(training_nn, training$classe == "C")
+training_nn <- cbind(training_nn, training$classe == "D")
+training_nn <- cbind(training_nn, training$classe == "E")
+
+cols <- sapply(training_nn, is.logical)
+training_nn[,cols] <- lapply(training_nn[,cols], as.numeric)
+training_nn <- training_nn[-c(56, 57, 58)]
+names(training_nn)[56] <- "window_yes"
+names(training_nn)[57] <- "window_no"
+names(training_nn)[58] <- "classe_A"
+names(training_nn)[59] <- "classe_B"
+names(training_nn)[60] <- "classe_C"
+names(training_nn)[61] <- "classe_D"
+names(training_nn)[62] <- "classe_E"
+str(training_nn)
+
+validation_nn <- cbind(validation, validation$new_window == "yes")
+validation_nn <- cbind(validation_nn, validation$new_window == "no")
+validation_nn <- cbind(validation_nn, validation$classe == "A")
+validation_nn <- cbind(validation_nn, validation$classe == "B")
+validation_nn <- cbind(validation_nn, validation$classe == "C")
+validation_nn <- cbind(validation_nn, validation$classe == "D")
+validation_nn <- cbind(validation_nn, validation$classe == "E")
+
+cols_1 <- sapply(validation_nn, is.logical)
+validation_nn[,cols_1] <- lapply(validation_nn[,cols_1], as.numeric)
+validation_nn <- validation_nn[-c(56, 57, 58)]
+names(validation_nn)[56] <- "window_yes"
+names(validation_nn)[57] <- "window_no"
+names(validation_nn)[58] <- "classe_A"
+names(validation_nn)[59] <- "classe_B"
+names(validation_nn)[60] <- "classe_C"
+names(validation_nn)[61] <- "classe_D"
+names(validation_nn)[62] <- "classe_E"
+str(validation_nn)
+
+testing_nn <- cbind(testing, testing$new_window == "yes")
+testing_nn <- cbind(testing_nn, testing$new_window == "no")
+
+cols_2 <- sapply(testing_nn, is.logical)
+testing_nn[,cols_2] <- lapply(testing_nn[,cols_2], as.numeric)
+testing_nn <- testing_nn[-c(56, 57)]
+names(training_nn)[56] <- "window_yes"
+names(training_nn)[57] <- "window_no"
+
+# find variable names
+names <- names(training_nn)
+var <- as.formula(paste("classe_A + classe_B + classe_C + classe_D + classe_E ~", 
+                        paste(names[!names %in% c("classe_A", "classe_B", "classe_C", "classe_D", "classe_E")], 
+                              collapse = " + ")))
+
+```
+
+```{r}
+dim(training_nn)
+head(training_nn[58:62])
+```
+
+Since the package "neuralnet" took too long to run in R markdown, I will exclude the code here and only show my results using h2o package. 
+The activation function I used was "tanh". I noticed that large number of neurons didn't give me better result. The result table is as follows: (I used all of the available data with 10 folds cross validation in h2o package for nerual network, so there's no validation accuracy)
+
+```{r results = "hide"}
+
+```
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE}
+# Neural Network with h2o package
+h2o.init(nthreads = -1, max_mem_size = "4g")
+
+write.csv(training_scaled, "h2o_data.csv")
+h2o_data <- h2o.importFile("h2o_data.csv")
+
+set.seed(123)
+system.time(
+        h2o_model_1 <- h2o.deeplearning(x = 1:58,
+                                        y = 59,
+                                        h2o_data,
+                                        nfolds = 10,
+                                        model_id = "DL_defaults",
+                                        stopping_metric = "MSE",
+                                        stopping_tolerance = 0.0005,
+                                        stopping_rounds = 5,
+                                        epochs = 2000,
+                                        train_samples_per_iteration = 0,
+                                        score_interval = 3)
+)
+
+h2o_pred_training_1 <- h2o.predict(h2o_model_1, newdata = h2o_data)
+h2o_pred_training_1 <- as.data.frame(h2o_pred_training_1)
+h2o_pred_training_1$predict
+
+table(h2o_pred_training_1$predict, training_scaled$classe)
+
+acc_h2o_nn_1 <- mean(h2o_pred_training_1$predict == training_scaled$classe)
+```
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE}
+set.seed(123)
+system.time(
+        h2o_model_2 <- h2o.deeplearning(x = 1:58,
+                                        y = 59,
+                                        h2o_data,
+                                        nfolds = 10,
+                                        model_id = "DL_best",
+                                        activation = "Tanh",
+                                        l2 = 0.00001,
+                                        hidden = c(200, 200),
+                                        stopping_metric = "MSE",
+                                        stopping_tolerance = 0.0005,
+                                        stopping_rounds = 5,
+                                        epochs = 2000,
+                                        train_samples_per_iteration = 0,
+                                        score_interval = 3)
+)
+
+h2o_pred_training_2 <- h2o.predict(h2o_model_2, newdata = h2o_data)
+h2o_pred_training_2 <- as.data.frame(h2o_pred_training_2)
+h2o_pred_training_2$predict
+
+table(h2o_pred_training_2$predict, training_scaled$classe)
+
+acc_h2o_nn_2 <- mean(h2o_pred_training_2$predict == training_scaled$classe)
+```
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE}
+set.seed(123)
+system.time(
+        h2o_model_3 <- h2o.deeplearning(x = 1:58,
+                                        y = 59,
+                                        h2o_data,
+                                        nfolds = 10,
+                                        model_id = "DL_best",
+                                        activation = "Tanh",
+                                        l2 = 0.00001,
+                                        hidden = c(10),
+                                        stopping_metric = "MSE",
+                                        stopping_tolerance = 0.0005,
+                                        stopping_rounds = 5,
+                                        epochs = 2000,
+                                        train_samples_per_iteration = 0,
+                                        score_interval = 3)
+)
+
+h2o_pred_training_3 <- h2o.predict(h2o_model_3, h2o_data)
+h2o_pred_training_3 <- as.data.frame(h2o_pred_training_3)
+h2o_pred_training_3$predict
+
+table(h2o_pred_training_3$predict, training_scaled$classe)
+
+acc_h2o_nn_3 <- mean(h2o_pred_training_3$predict == training_scaled$classe)
+```
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE}
+set.seed(123)
+system.time(
+        h2o_model_4 <- h2o.deeplearning(x = 1:58,
+                                        y = 59,
+                                        h2o_data,
+                                        nfolds = 10,
+                                        model_id = "DL_best",
+                                        activation = "Tanh",
+                                        l2 = 0.00001,
+                                        hidden = c(10, 10),
+                                        stopping_metric = "MSE",
+                                        stopping_tolerance = 0.0005,
+                                        stopping_rounds = 5,
+                                        epochs = 2000,
+                                        train_samples_per_iteration = 0,
+                                        score_interval = 3)
+)
+
+h2o_pred_training_4 <- h2o.predict(h2o_model_4, newdata = h2o_data)
+h2o_pred_training_4 <- as.data.frame(h2o_pred_training_4)
+h2o_pred_training_4$predict
+
+table(h2o_pred_training_4$predict, training_scaled$classe)
+
+acc_h2o_nn_4 <- mean(h2o_pred_training_4$predict == training_scaled$classe)
+```
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE}
+set.seed(123)
+system.time(
+        h2o_model_5 <- h2o.deeplearning(x = 1:58,
+                                        y = 59,
+                                        h2o_data,
+                                        nfolds = 10,
+                                        model_id = "DL_best",
+                                        activation = "Tanh",
+                                        l2 = 0.00001,
+                                        hidden = c(5),
+                                        stopping_metric = "MSE",
+                                        stopping_tolerance = 0.0005,
+                                        stopping_rounds = 5,
+                                        epochs = 2000,
+                                        train_samples_per_iteration = 0,
+                                        score_interval = 3)
+)
+
+h2o_pred_training_5 <- h2o.predict(h2o_model_5, newdata = h2o_data)
+h2o_pred_training_5 <- as.data.frame(h2o_pred_training_5)
+h2o_pred_training_5$predict
+
+table(h2o_pred_training_5$predict, training_scaled$classe)
+
+acc_h2o_nn_5 <- mean(h2o_pred_training_5$predict == training_scaled$classe)
+```
+
+```{r echo = FALSE, results = "hide", cache = TRUE, error = TRUE}
+set.seed(123)
+system.time(
+        h2o_model_6 <- h2o.deeplearning(x = 1:58,
+                                        y = 59,
+                                        h2o_data,
+                                        nfolds = 10,
+                                        model_id = "DL_best",
+                                        activation = "Tanh",
+                                        l2 = 0.00001,
+                                        hidden = c(5, 3),
+                                        stopping_metric = "MSE",
+                                        stopping_tolerance = 0.0005,
+                                        stopping_rounds = 5,
+                                        epochs = 2000,
+                                        train_samples_per_iteration = 0,
+                                        score_interval = 3)
+)
+
+h2o_pred_training_6 <- h2o.predict(h2o_model_6, newdata = h2o_data)
+h2o_pred_training_6 <- as.data.frame(h2o_pred_training_6)
+h2o_pred_training_6$predict
+
+table(h2o_pred_training_6$predict, training_scaled$classe)
+
+acc_h2o_nn_6 <- mean(h2o_pred_training_6$predict == training_scaled$classe)
+
+h2o.shutdown()
+```
+
+```{r echo = FALSE, cache = TRUE, error = TRUE}
+nn_list <- c("nn with h2o (200, 200)", 
+             "nn with h2o (10)", "nn with h2o (10, 10)",
+             "nn with h2o (5)", "nn with h2o (5, 3)")
+nn_training_list <- c(acc_h2o_nn_1, acc_h2o_nn_3,
+                      acc_h2o_nn_4, acc_h2o_nn_5, acc_h2o_nn_6)
+nn_validation_list <- c("-", "-", "-", "-", "-")
+nn_table <- data.frame("nn_model" = nn_list, "training_accuracy" = nn_training_list,
+                       "validation_accuracy" = nn_validation_list)
+nn_table
+
+```
+
+### K Nearest Neighbors
+
+For K Nearest Neighbors models, I noticed that smaller number of K gave me better results.
+
+```{r echo = FALSE, cache = TRUE}
+# Drop chr variables
+knn_training <- training[,1:55]
+knn_training_label <- training[,58]
+knn_validation <- validation[,1:55]
+knn_validation_label <- validation[,58]
+knn_testing <- testing[,1:55]
+
+knn_model_1 <- knn(train = knn_training, test = knn_validation, 
+                   cl = knn_training_label,
+                   k = 50)
+# table(knn_model_1, validation$classe)
+acc_knn_validation_1 <- mean(knn_model_1 == validation$classe)
+
+knn_model_2 <- knn(train = knn_training, test = knn_validation, 
+                   cl = knn_training_label,
+                   k = 10)
+# table(knn_model_2, validation$classe)
+acc_knn_validation_2 <- mean(knn_model_2 == validation$classe)
+
+knn_model_3 <- knn(train = knn_training, test = knn_validation, 
+                   cl = knn_training_label,
+                   k = 5)
+# table(knn_model_3, validation$classe)
+acc_knn_validation_3 <- mean(knn_model_3 == validation$classe)
+
+knn_model_4 <- knn(train = knn_training, test = knn_validation, 
+                   cl = knn_training_label,
+                   k = 3)
+# table(knn_model_4, validation$classe)
+acc_knn_validation_4 <- mean(knn_model_4 == validation$classe)
+
+knn_model_5 <- knn(train = knn_training, test = knn_validation, 
+                   cl = knn_training_label,
+                   k = 1)
+# table(knn_model_5, validation$classe)
+acc_knn_validation_5 <- mean(knn_model_5 == validation$classe)
+
+knn_list <- c("knn, n = 50", "knn, n = 10", "knn, n = 5", "knn, n = 3",
+              "knn, n = 1")
+knn_training_list <- c("-", "-", "-", "-", "-")
+knn_validation_list <- c(acc_knn_validation_1, acc_knn_validation_2,
+                         acc_knn_validation_3, acc_knn_validation_4,
+                         acc_knn_validation_5)
+knn_table <- data.frame("knn_model" = knn_list, 
+                        "training_accuracy" = knn_training_list,
+                        "validation_accuracy" = knn_validation_list)
+knn_table
+table(knn_model_5, validation$classe)
+```
+
+## Prediction
+
+Finally, I used my top 3 models (Random Forest with 500 trees, Boosting, and K Nearest Neighbors with K = 1) to predict the test cases. 
+
+```{r echo = FALSE, results = "hide"}
+### Predict the test cases
+str(training)
+str(testing)
+# Errors occur because factor variables in training set and test set have different levels
+levels(testing$cvtd_timestamp) <- levels(training$cvtd_timestamp)
+levels(testing$new_window) <- levels(training$new_window)
+forest_pred_test <- predict(forest_model_2, testing)
+forest_pred_test
+
+boosting_pred_test_1 <- predict(boosting_model_1, testing)
+boosting_pred_test_1
+
+boosting_pred_test_2 <- predict(boosting_model_2, testing, type = "response")
+boosting_pred_test_2
+boosting_pred_test_2 <- attributes(boosting_pred_test_2)$dimnames[[2]][apply(boosting_pred_test_2, 1, which.max)]
+
+knn_pred_test_1 <- knn(train = knn_training, test = knn_testing, 
+                       cl = knn_training_label,
+                       k = 1)
+
+final <- data.frame(forest_pred_test, boosting_pred_test_1, knn_pred_test_1)
+
+Mode <- function(x) {
+        ux <- unique(x)
+        ux[which.max(tabulate(match(x, ux)))]
+}
+
+final_prediction <- apply(final, 1, Mode)
+```
+
+Prediction results for the top 3 models
+
+```{r echo = FALSE}
+data.frame(forest_pred_test, boosting_pred_test_1, knn_pred_test_1)
+```
+
+Using majority vote rule, my final prediction is:
+        
+```{r echo = FALSE}
+final_prediction <- apply(final, 1, Mode)
+final_prediction
+```
